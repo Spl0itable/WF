@@ -1,0 +1,132 @@
+name: "Wordfence CLI build"
+
+on:
+  push: 
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+
+jobs:
+  linux_standalone_build:
+    name: Linux standalone build
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Set up QEMU to support additional platforms
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Docker build
+        run: ./docker/build/host-refresh.sh "$GITHUB_WORKSPACE" "$ARCHITECTURE" standalone
+        env:
+          ARCHITECTURE: ${{ matrix.arch }}
+      - name: Docker run
+        run: ./docker/build/host-build.sh "$GITHUB_WORKSPACE" "$ARCHITECTURE" standalone
+        env:
+          ARCHITECTURE: ${{ matrix.arch }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordfence_cli_${{ matrix.arch }}
+          path: ${{ github.workspace }}/docker/build/volumes/output/wordfence_*.tar.gz
+  deb_build:
+    name: deb build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker build
+        run: ./docker/build/host-refresh.sh "$GITHUB_WORKSPACE" amd64 deb
+      - name: Docker run
+        run: ./docker/build/host-build.sh "$GITHUB_WORKSPACE" amd64 deb
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordfence_cli_deb
+          path: ${{ github.workspace }}/docker/build/volumes/output/wordfence.deb
+  rpm_build:
+    name: RPM build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker build
+        run: ./docker/build/host-refresh.sh "$GITHUB_WORKSPACE" amd64 rpm
+      - name: Docker run
+        run: ./docker/build/host-build.sh "$GITHUB_WORKSPACE" amd64 rpm
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordfence_cli_rpm_el9
+          path: ${{ github.workspace }}/docker/build/volumes/output/wordfence-el9.rpm
+  python_build:
+    name: Python build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+      - name: Transform readme
+        run: ./scripts/transform-readme.py README.md ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/
+      - name: Python build
+        run: |
+          pip install build~=0.10
+          python3 -m build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordfence_cli_python
+          path: |
+            ${{ github.workspace }}/dist/*.tar.gz
+            ${{ github.workspace }}/dist/*.whl
+            ${{ github.workspace }}/dist/*.sha256
+            ${{ github.workspace }}/dist/*.asc
+  generate_checksums:
+    name: Generate checksums
+    runs-on: ubuntu-24.04
+    needs:
+      - linux_standalone_build
+      - deb_build
+      - rpm_build
+      - python_build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Create checksums
+        run: |
+          touch checksums.txt
+          for artifact in \
+            wordfence_cli_amd64 \
+            wordfence_cli_arm64 \
+            wordfence_cli_deb \
+            wordfence_cli_rpm_el9 \
+            wordfence_cli_python
+          do
+            pushd "$artifact"
+            sha256sum * >> ../checksums.txt
+            popd
+          done
+          cat checksums.txt
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Sign checksums file
+        run: gpg --detach-sign --armor --local-user '=Wordfence <opensource@wordfence.com>' checksums.txt
+      - name: Upload checksums and signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordfence_cli_checksums
+          path: |
+            ${{ github.workspace }}/checksums.txt
+            ${{ github.workspace }}/checksums.txt.asc
