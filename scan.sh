@@ -202,6 +202,46 @@ DBSCAN_MATCHES=$(wc -l < "$DBSCAN_CSV" 2>/dev/null) || DBSCAN_MATCHES=0
 DBSCAN_MATCHES=$(( DBSCAN_MATCHES > 1 ? DBSCAN_MATCHES - 1 : 0 ))  # subtract header
 
 echo ""
+
+# Display malware scan results
+if [ "$MALWARE_MATCHES" -gt 0 ]; then
+    echo -e "\033[1;31m── Malware Findings ($MALWARE_MATCHES) ──\033[0m"
+    grep -e "/www" -e "/staging" "$MALWARE_CSV" 2>/dev/null | while IFS=',' read -r file desc rest; do
+        echo -e "  \033[0;31m⚠\033[0m $file"
+        [ -n "$desc" ] && echo -e "    \033[0;38;5;7m$desc\033[0m"
+    done
+    echo ""
+else
+    echo -e "\033[0;32m── Malware Scan: Clean ──\033[0m"
+    echo ""
+fi
+
+# Display vulnerability scan results
+if [ "$VULN_MATCHES" -gt 0 ]; then
+    echo -e "\033[1;33m── Vulnerability Findings ($VULN_MATCHES) ──\033[0m"
+    grep "<=" "$VULN_CSV" 2>/dev/null | while IFS=',' read -r slug version vuln_title rest; do
+        echo -e "  \033[0;33m⚠\033[0m $slug ($version)"
+        [ -n "$vuln_title" ] && echo -e "    \033[0;38;5;7m$vuln_title\033[0m"
+    done
+    echo ""
+else
+    echo -e "\033[0;32m── Vulnerability Scan: Clean ──\033[0m"
+    echo ""
+fi
+
+# Display database scan results
+if [ "$DBSCAN_MATCHES" -gt 0 ]; then
+    echo -e "\033[1;33m── Database Findings ($DBSCAN_MATCHES) ──\033[0m"
+    tail -n +2 "$DBSCAN_CSV" 2>/dev/null | while IFS=',' read -r line; do
+        echo -e "  \033[0;33m⚠\033[0m $line"
+    done
+    echo ""
+else
+    echo -e "\033[0;32m── Database Scan: Clean ──\033[0m"
+    echo ""
+fi
+
+# Save combined report
 if [ "$MALWARE_MATCHES" -gt 0 ] || [ "$VULN_MATCHES" -gt 0 ] || [ "$DBSCAN_MATCHES" -gt 0 ]; then
     echo "" | sudo tee -a "$MALWARE_CSV" > /dev/null
     cat "$MALWARE_CSV" "$VULN_CSV" "$DBSCAN_CSV" > "$FINAL_CSV" 2>/dev/null
